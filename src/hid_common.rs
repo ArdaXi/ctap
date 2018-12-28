@@ -12,4 +12,5 @@ pub struct DeviceInfo {
     pub path: PathBuf,
     pub usage_page: u16,
     pub usage: u16,
+    pub report_size: u16,
 }

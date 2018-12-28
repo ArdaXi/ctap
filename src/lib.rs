@@ -61,14 +61,13 @@ use std::cmp;
 use std::u8;
 use std::u16;
 use std::fs;
-use std::io::{Read, Write, Cursor};
+use std::io::{Write, Cursor};
 
 use failure::{Fail, ResultExt};
 use rand::prelude::*;
 use num_traits::FromPrimitive;
 use self::hid_linux as hid;
 use self::packet::CtapCommand;
-use self::packet::Packet;
 pub use self::error::*;
 
 static BROADCAST_CID: [u8; 4] = [0xff, 0xff, 0xff, 0xff];
@@ -134,6 +133,10 @@ impl FidoDevice {
         let response = self.exchange(CtapCommand::Init, &nonce)?;
         if response.len() < 17 || response[0..8] != nonce {
             Err(FidoErrorKind::ParseCtap)?
+        }
+        let flags = response[16];
+        if flags & 0x04 == 0 {
+            Err(FidoErrorKind::DeviceUnsupported)?
         }
         self.channel_id.copy_from_slice(&response[8..12]);
         let response = match self.cbor(cbor::Request::GetInfo)? {
@@ -352,21 +355,13 @@ impl FidoDevice {
         let to_send = payload.len() as u16;
         let max_payload = (self.packet_size - 7) as usize;
         let (frame, payload) = payload.split_at(cmp::min(payload.len(), max_payload));
-        {
-            let packet = packet::InitPacket::new(&self.channel_id, cmd, to_send, frame);
-            self.device.write(packet.to_wire_format()).context(
-                FidoErrorKind::WritePacket,
-            )?;
-        }
+        packet::write_init_packet(&mut self.device, 64, &self.channel_id, cmd, to_send, frame)?;
         if payload.is_empty() {
             return Ok(());
         }
         let max_payload = (self.packet_size - 5) as usize;
         for (seq, frame) in (0..u8::MAX).zip(payload.chunks(max_payload)) {
-            let packet = packet::ContPacket::new(&self.channel_id, seq, frame);
-            self.device.write(packet.to_wire_format()).context(
-                FidoErrorKind::WritePacket,
-            )?;
+            packet::write_cont_packet(&mut self.device, 64, &self.channel_id, seq, frame)?;
         }
         self.device.flush().context(FidoErrorKind::WritePacket)?;
         Ok(())
@@ -374,43 +369,33 @@ impl FidoDevice {
 
     fn receive(&mut self, cmd: &CtapCommand) -> FidoResult<Vec<u8>> {
         let mut first_packet: Option<packet::InitPacket> = None;
-        let mut packet_size = 0;
         while first_packet.is_none() {
-            let mut buf = [0; 64];
-            packet_size = self.device.read(&mut buf).context(
-                FidoErrorKind::ReadPacket,
-            )?;
-            let packet = packet::InitPacket::from_wire_format(&buf[0..packet_size]);
-            if packet.cmd() == CtapCommand::Error {
+            let packet = packet::InitPacket::from_reader(&mut self.device, 64)?;
+            if packet.cmd == CtapCommand::Error {
                 Err(
-                    packet::CtapError::from_u8(packet.payload()[0])
+                    packet::CtapError::from_u8(packet.payload[0])
                         .unwrap_or(packet::CtapError::Other)
                         .context(FidoErrorKind::ParseCtap),
                 )?
             }
-            if packet.cid() == self.channel_id && &packet.cmd() == cmd {
+            if packet.cid == self.channel_id && &packet.cmd == cmd {
                 first_packet = Some(packet);
             }
         }
         let first_packet = first_packet.unwrap();
-        let mut data = first_packet.payload()[0..(packet_size - 7)].to_vec();
-        let mut to_read = (first_packet.size() as isize) - data.len() as isize;
+        let mut data = first_packet.payload;
+        let mut to_read = (first_packet.size as isize) - data.len() as isize;
         let mut seq = 0;
         while to_read > 0 {
-            let mut buf = [0; 64];
-            let packet_size = self.device.read(&mut buf).context(
-                FidoErrorKind::ReadPacket,
-            )?;
-            let packet = packet::ContPacket::from_wire_format(&buf[0..packet_size]);
-            if packet.cid() != self.channel_id {
+            let packet = packet::ContPacket::from_reader(&mut self.device, 64, to_read as usize)?;
+            if packet.cid != self.channel_id {
                 continue;
             }
-            if packet.seq() != seq {
+            if packet.seq != seq {
                 Err(FidoErrorKind::InvalidSequence)?
             }
-            let payload_size = packet_size - 5;
-            to_read -= payload_size as isize;
-            data.extend(&packet.payload()[0..payload_size]);
+            to_read -= packet.payload.len() as isize;
+            data.extend(&packet.payload);
             seq += 1;
         }
         Ok(data)

@@ -83,5 +83,6 @@ fn path_to_device(path: &PathBuf) -> io::Result<DeviceInfo> {
         path: device_path,
         usage_page,
         usage,
+        report_size,
     })
 }

@@ -5,6 +5,10 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 use num_traits::{FromPrimitive, ToPrimitive};
+use failure::ResultExt;
+use super::error::*;
+
+use std::io::{Read, Write};
 
 static FRAME_INIT: u8 = 0x80;
 
@@ -55,89 +59,121 @@ pub enum CtapError {
     Other = 0x7F,
 }
 
-pub trait Packet {
-    fn from_wire_format(data: &[u8]) -> Self;
-
-    fn to_wire_format(&self) -> &[u8];
+pub fn write_init_packet<W: Write>(
+    mut writer: W,
+    report_size: usize,
+    cid: &[u8],
+    cmd: &CtapCommand,
+    size: u16,
+    payload: &[u8],
+) -> FidoResult<()> {
+    if cid.len() != 4 {
+        Err(FidoErrorKind::WritePacket)?
+    }
+    let mut packet = Vec::with_capacity(report_size);
+    packet.push(0);
+    packet.extend_from_slice(cid);
+    packet.push(FRAME_INIT | cmd.to_wire_format());
+    packet.push(((size >> 8) & 0xff) as u8);
+    packet.push((size & 0xff) as u8);
+    packet.extend_from_slice(payload);
+    if packet.len() > report_size + 1 {
+        Err(FidoErrorKind::WritePacket)?
+    }
+    packet.resize(report_size + 1, 0);
+    writer.write_all(&packet).context(
+        FidoErrorKind::WritePacket,
+    )?;
+    Ok(())
 }
 
-pub struct InitPacket(pub [u8; 65]);
+pub struct InitPacket {
+    pub cid: [u8; 4],
+    pub cmd: CtapCommand,
+    pub size: u16,
+    pub payload: Vec<u8>,
+}
 
 impl InitPacket {
-    pub fn new(cid: &[u8], cmd: &CtapCommand, size: u16, payload: &[u8]) -> InitPacket {
-        let mut packet = InitPacket([0; 65]);
-        packet.0[1..5].copy_from_slice(cid);
-        packet.0[5] = FRAME_INIT | cmd.to_wire_format();
-        packet.0[6] = ((size >> 8) & 0xff) as u8;
-        packet.0[7] = (size & 0xff) as u8;
-        packet.0[8..(payload.len() + 8)].copy_from_slice(payload);
-        packet
-    }
-
-    pub fn cid(&self) -> &[u8] {
-        &self.0[1..5]
-    }
-
-    pub fn cmd(&self) -> CtapCommand {
-        match CtapCommand::from_u8(self.0[5] ^ FRAME_INIT) {
+    pub fn from_reader<R: Read>(mut reader: R, report_size: usize) -> FidoResult<InitPacket> {
+        let mut buf = Vec::with_capacity(report_size);
+        buf.resize(report_size, 0);
+        reader.read_exact(&mut buf[0..report_size]).context(
+            FidoErrorKind::ReadPacket,
+        )?;
+        let mut cid = [0; 4];
+        cid.copy_from_slice(&buf[0..4]);
+        let cmd = match CtapCommand::from_u8(buf[4] ^ FRAME_INIT) {
             Some(cmd) => cmd,
             None => CtapCommand::Invalid,
-        }
-    }
-
-    pub fn size(&self) -> u16 {
-        ((u16::from(self.0[6])) << 8) | u16::from(self.0[7])
-    }
-
-    pub fn payload(&self) -> &[u8] {
-        &self.0[8..65]
-    }
-}
-
-impl Packet for InitPacket {
-    fn from_wire_format(data: &[u8]) -> InitPacket {
-        let mut packet = InitPacket([0; 65]);
-        packet.0[1..65].copy_from_slice(data);
-        packet
-    }
-
-    fn to_wire_format(&self) -> &[u8] {
-        &self.0
+        };
+        let size = ((u16::from(buf[5])) << 8) | u16::from(buf[6]);
+        let payload_end = if (size as usize) >= (report_size - 7) {
+            report_size
+        } else {
+            size as usize + 7
+        };
+        let payload = buf.drain(7..payload_end).collect();
+        Ok(InitPacket {
+            cid,
+            cmd,
+            size,
+            payload,
+        })
     }
 }
 
-pub struct ContPacket(pub [u8; 65]);
+pub fn write_cont_packet<W: Write>(
+    mut writer: W,
+    report_size: usize,
+    cid: &[u8],
+    seq: u8,
+    payload: &[u8],
+) -> FidoResult<()> {
+    if cid.len() != 4 {
+        Err(FidoErrorKind::WritePacket)?
+    }
+    let mut packet = Vec::with_capacity(report_size);
+    packet.push(0);
+    packet.extend_from_slice(cid);
+    packet.push(seq);
+    packet.extend_from_slice(payload);
+    if packet.len() > report_size + 1 {
+        Err(FidoErrorKind::WritePacket)?
+    }
+    packet.resize(report_size + 1, 0);
+    writer.write_all(&packet).context(
+        FidoErrorKind::WritePacket,
+    )?;
+    Ok(())
+}
+
+pub struct ContPacket {
+    pub cid: [u8; 4],
+    pub seq: u8,
+    pub payload: Vec<u8>,
+}
 
 impl ContPacket {
-    pub fn new(cid: &[u8], seq: u8, payload: &[u8]) -> ContPacket {
-        let mut packet = ContPacket([0; 65]);
-        packet.0[1..5].copy_from_slice(cid);
-        packet.0[5] = seq;
-        packet.0[6..(payload.len() + 6)].copy_from_slice(payload);
-        packet
-    }
-
-    pub fn cid(&self) -> &[u8] {
-        &self.0[1..5]
-    }
-
-    pub fn seq(&self) -> u8 {
-        self.0[5]
-    }
-
-    pub fn payload(&self) -> &[u8] {
-        &self.0[6..65]
-    }
-}
-
-impl Packet for ContPacket {
-    fn from_wire_format(data: &[u8]) -> ContPacket {
-        let mut packet = ContPacket([0; 65]);
-        packet.0[1..65].copy_from_slice(data);
-        packet
-    }
-
-    fn to_wire_format(&self) -> &[u8] {
-        &self.0
+    pub fn from_reader<R: Read>(
+        mut reader: R,
+        report_size: usize,
+        expected_data: usize,
+    ) -> FidoResult<ContPacket> {
+        let mut buf = Vec::with_capacity(report_size);
+        buf.resize(report_size, 0);
+        reader.read_exact(&mut buf[0..report_size]).context(
+            FidoErrorKind::ReadPacket,
+        )?;
+        let mut cid = [0; 4];
+        cid.copy_from_slice(&buf[0..4]);
+        let seq = buf[4];
+        let payload_end = if expected_data >= (report_size - 5) {
+            report_size
+        } else {
+            expected_data + 5
+        };
+        let payload = buf.drain(5..payload_end).collect();
+        Ok(ContPacket { cid, seq, payload })
     }
 }

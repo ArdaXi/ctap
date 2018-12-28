@@ -10,8 +10,8 @@
 //!
 //! ```
 //! # fn do_fido() -> ctap::FidoResult<()> {
-//! let devices = ctap::get_devices()?;
-//! let device_info = &devices[0];
+//! let mut devices = ctap::get_devices()?;
+//! let device_info = &devices.next().unwrap();
 //! let mut device = ctap::FidoDevice::new(device_info)?;
 //!
 //! // This can be omitted if the FIDO device is not configured with a PIN.
@@ -74,14 +74,13 @@ pub use self::error::*;
 static BROADCAST_CID: [u8; 4] = [0xff, 0xff, 0xff, 0xff];
 
 /// Looks for any connected HID devices and returns those that support FIDO.
-pub fn get_devices() -> error::FidoResult<Vec<hid::DeviceInfo>> {
-    Ok(
-        hid::enumerate()
-            .context(FidoErrorKind::Io)?
-            .into_iter()
-            .filter(|dev| dev.usage_page == 0xf1d0 && dev.usage == 0x21)
-            .collect(),
-    )
+pub fn get_devices() -> FidoResult<impl Iterator<Item = hid::DeviceInfo>> {
+    hid::enumerate()
+        .context(FidoErrorKind::Io)
+        .map(|devices| {
+            devices.filter(|dev| dev.usage_page == 0xf1d0 && dev.usage == 0x21)
+        })
+        .map_err(From::from)
 }
 
 /// A credential created by a FIDO2 authenticator.

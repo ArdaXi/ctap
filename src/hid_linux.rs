@@ -16,11 +16,12 @@ static USAGE_PAGE: u8 = 0x04;
 static USAGE: u8 = 0x08;
 static REPORT_SIZE: u8 = 0x74;
 
-pub fn enumerate() -> io::Result<Vec<DeviceInfo>> {
-    fs::read_dir("/sys/class/hidraw")?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| path_to_device(&entry.path()))
-        .collect()
+pub fn enumerate() -> io::Result<impl Iterator<Item = DeviceInfo>> {
+    fs::read_dir("/sys/class/hidraw").map(|entries| {
+        entries.filter_map(|entry| entry.ok()).filter_map(|entry| {
+            path_to_device(&entry.path()).ok()
+        })
+    })
 }
 
 fn path_to_device(path: &PathBuf) -> io::Result<DeviceInfo> {

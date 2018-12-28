@@ -102,6 +102,7 @@ pub struct FidoDevice {
     needs_pin: bool,
     shared_secret: Option<crypto::SharedSecret>,
     pin_token: Option<crypto::PinToken>,
+    aaguid: [u8; 16],
 }
 
 impl FidoDevice {
@@ -121,6 +122,7 @@ impl FidoDevice {
             needs_pin: false,
             shared_secret: None,
             pin_token: None,
+            aaguid: [0; 16],
         };
         dev.init()?;
         Ok(dev)
@@ -145,7 +147,14 @@ impl FidoDevice {
             Err(FidoErrorKind::DeviceUnsupported)?
         }
         self.needs_pin = response.options.client_pin == Some(true);
+        self.aaguid = response.aaguid;
         Ok(())
+    }
+
+    /// Get the authenticator's AAGUID. This is not unique to an authenticator,
+    /// but it is unique to the specific brand and model.
+    pub fn aaguid(&self) -> &[u8] {
+        &self.aaguid
     }
 
     fn init_shared_secret(&mut self) -> FidoResult<()> {

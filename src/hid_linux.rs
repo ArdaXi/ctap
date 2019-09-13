@@ -4,11 +4,11 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use std::io;
-use std::fs;
-use std::path::PathBuf;
-use byteorder::{ByteOrder, LittleEndian};
 pub use super::hid_common::*;
+use byteorder::{ByteOrder, LittleEndian};
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 
 static REPORT_DESCRIPTOR_KEY_MASK: u8 = 0xfc;
 static LONG_ITEM_ENCODING: u8 = 0xfe;
@@ -18,9 +18,9 @@ static REPORT_SIZE: u8 = 0x74;
 
 pub fn enumerate() -> io::Result<impl Iterator<Item = DeviceInfo>> {
     fs::read_dir("/sys/class/hidraw").map(|entries| {
-        entries.filter_map(|entry| entry.ok()).filter_map(|entry| {
-            path_to_device(&entry.path()).ok()
-        })
+        entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| path_to_device(&entry.path()).ok())
     })
 }
 

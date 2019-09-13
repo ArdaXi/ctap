@@ -37,38 +37,39 @@
 
 #![allow(dead_code)]
 
-extern crate rand;
 extern crate failure;
+extern crate rand;
 #[macro_use]
 extern crate failure_derive;
 #[macro_use]
 extern crate num_derive;
-extern crate num_traits;
 extern crate byteorder;
 extern crate cbor as cbor_codec;
+extern crate crypto as rust_crypto;
+extern crate num_traits;
 extern crate ring;
 extern crate untrusted;
-extern crate crypto as rust_crypto;
 
-mod packet;
+mod cbor;
+mod crypto;
+mod error;
+pub mod extensions;
 mod hid_common;
 mod hid_linux;
-mod error;
-mod crypto;
-mod cbor;
+mod packet;
 
 use std::cmp;
-use std::u8;
-use std::u16;
 use std::fs;
-use std::io::{Write, Cursor};
+use std::io::{Cursor, Write};
+use std::u16;
+use std::u8;
 
-use failure::{Fail, ResultExt};
-use rand::prelude::*;
-use num_traits::FromPrimitive;
+pub use self::error::*;
 use self::hid_linux as hid;
 use self::packet::CtapCommand;
-pub use self::error::*;
+use failure::{Fail, ResultExt};
+use num_traits::FromPrimitive;
+use rand::prelude::*;
 
 static BROADCAST_CID: [u8; 4] = [0xff, 0xff, 0xff, 0xff];
 
@@ -76,9 +77,7 @@ static BROADCAST_CID: [u8; 4] = [0xff, 0xff, 0xff, 0xff];
 pub fn get_devices() -> FidoResult<impl Iterator<Item = hid::DeviceInfo>> {
     hid::enumerate()
         .context(FidoErrorKind::Io)
-        .map(|devices| {
-            devices.filter(|dev| dev.usage_page == 0xf1d0 && dev.usage == 0x21)
-        })
+        .map(|devices| devices.filter(|dev| dev.usage_page == 0xf1d0 && dev.usage == 0x21))
         .map_err(From::from)
 }
 
@@ -234,9 +233,10 @@ impl FidoDevice {
         if client_data_hash.len() != 32 {
             Err(FidoErrorKind::CborEncode)?
         }
-        let pin_auth = self.pin_token.as_ref().map(
-            |token| token.auth(&client_data_hash),
-        );
+        let pin_auth = self
+            .pin_token
+            .as_ref()
+            .map(|token| token.auth(&client_data_hash));
         let rp = cbor::PublicKeyCredentialRpEntity {
             id: rp_id,
             name: None,
@@ -273,7 +273,7 @@ impl FidoDevice {
                 .attested_credential_data
                 .credential_public_key,
         )?
-            .bytes();
+        .bytes();
         Ok(FidoCredential {
             id: response.auth_data.attested_credential_data.credential_id,
             rp_id: String::from(rp_id),
@@ -300,15 +300,14 @@ impl FidoDevice {
         if client_data_hash.len() != 32 {
             Err(FidoErrorKind::CborEncode)?
         }
-        let pin_auth = self.pin_token.as_ref().map(
-            |token| token.auth(&client_data_hash),
-        );
-        let allow_list = [
-            cbor::PublicKeyCredentialDescriptor {
-                cred_type: String::from("public-key"),
-                id: credential.id.clone(),
-            },
-        ];
+        let pin_auth = self
+            .pin_token
+            .as_ref()
+            .map(|token| token.auth(&client_data_hash));
+        let allow_list = [cbor::PublicKeyCredentialDescriptor {
+            cred_type: String::from("public-key"),
+            id: credential.id.clone(),
+        }];
         let request = cbor::GetAssertionRequest {
             rp_id: &credential.rp_id,
             client_data_hash: client_data_hash,
@@ -335,7 +334,9 @@ impl FidoDevice {
 
     fn cbor(&mut self, request: cbor::Request) -> FidoResult<cbor::Response> {
         let mut buf = Cursor::new(Vec::new());
-        request.encode(&mut buf).context(FidoErrorKind::CborEncode)?;
+        request
+            .encode(&mut buf)
+            .context(FidoErrorKind::CborEncode)?;
         let response = self.exchange(CtapCommand::Cbor, &buf.into_inner())?;
         request
             .decode(Cursor::new(response))
@@ -372,11 +373,9 @@ impl FidoDevice {
         while first_packet.is_none() {
             let packet = packet::InitPacket::from_reader(&mut self.device, 64)?;
             if packet.cmd == CtapCommand::Error {
-                Err(
-                    packet::CtapError::from_u8(packet.payload[0])
-                        .unwrap_or(packet::CtapError::Other)
-                        .context(FidoErrorKind::ParseCtap),
-                )?
+                Err(packet::CtapError::from_u8(packet.payload[0])
+                    .unwrap_or(packet::CtapError::Other)
+                    .context(FidoErrorKind::ParseCtap))?
             }
             if packet.cid == self.channel_id && &packet.cmd == cmd {
                 first_packet = Some(packet);

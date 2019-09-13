@@ -4,11 +4,11 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use cbor_codec::{EncodeError, DecodeError};
+use cbor_codec::{DecodeError, EncodeError};
 
+use failure::{Backtrace, Context, Fail};
 use std::fmt;
 use std::fmt::Display;
-use failure::{Context, Backtrace, Fail};
 
 pub type FidoResult<T> = Result<T, FidoError>;
 
@@ -52,7 +52,7 @@ pub enum FidoErrorKind {
 }
 
 impl Fail for FidoError {
-    fn cause(&self) -> Option<&Fail> {
+    fn cause(&self) -> Option<&dyn Fail> {
         self.0.cause()
     }
 

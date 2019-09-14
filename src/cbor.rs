@@ -439,21 +439,27 @@ impl AuthenticatorData {
         let flags = bytes[32];
         data.up = (flags & 0x01) == 0x01;
         data.uv = (flags & 0x02) == 0x02;
+        let is_attested = (flags & 0x40) == 0x40;
+        let has_extension_data = (flags & 0x80) == 0x80;
         data.sign_count = BigEndian::read_u32(&bytes[33..37]);
         if bytes.len() < 38 {
             return Ok(data);
         }
         let mut cur = Cursor::new(&bytes[37..]);
-        let attested_credential_data = AttestedCredentialData::from_bytes(&mut cur)?;
-        data.attested_credential_data = attested_credential_data;
-        if cur.position() >= (bytes.len() - 37) as u64 {
-            return Ok(data);
+        if is_attested {
+            let attested_credential_data = AttestedCredentialData::from_bytes(&mut cur)?;
+            data.attested_credential_data = attested_credential_data;
+            if cur.position() >= (bytes.len() - 37) as u64 {
+                return Ok(data);
+            }
         }
-        let mut decoder = GenericDecoder::new(Config::default(), cur);
-        for _ in 0..decoder.borrow_mut().object()? {
-            let key = decoder.borrow_mut().text()?;
-            let value = decoder.value()?;
-            data.extensions.insert(key.to_string(), value);
+        if has_extension_data {
+            let mut decoder = GenericDecoder::new(Config::default(), cur);
+            for _ in 0..decoder.borrow_mut().object()? {
+                let key = decoder.borrow_mut().text()?;
+                let value = decoder.value()?;
+                data.extensions.insert(key.to_string(), value);
+            }
         }
         Ok(data)
     }

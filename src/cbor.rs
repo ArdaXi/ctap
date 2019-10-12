@@ -4,11 +4,11 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use cbor_codec::{Config, Encoder, Decoder, GenericDecoder, GenericEncoder};
-use cbor_codec::value::Value;
 use cbor_codec::value;
+use cbor_codec::value::Value;
+use cbor_codec::{Config, Decoder, Encoder, GenericDecoder, GenericEncoder};
 
-use byteorder::{WriteBytesExt, ReadBytesExt, BigEndian, ByteOrder};
+use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
 use failure::ResultExt;
 
 use std::collections::HashMap;
@@ -29,25 +29,23 @@ impl<'a> Request<'a> {
         match self {
             Request::MakeCredential(req) => req.encode(&mut encoder),
             Request::GetAssertion(req) => req.encode(&mut encoder),
-            Request::GetInfo => {
-                encoder
-                    .writer()
-                    .write_u8(0x04)
-                    .context(FidoErrorKind::CborEncode)
-                    .map_err(From::from)
-            }
+            Request::GetInfo => encoder
+                .writer()
+                .write_u8(0x04)
+                .context(FidoErrorKind::CborEncode)
+                .map_err(From::from),
             Request::ClientPin(req) => req.encode(&mut encoder),
         }
     }
 
     pub fn decode<R: ReadBytesExt>(&self, reader: R) -> FidoResult<Response> {
         Ok(match self {
-            Request::MakeCredential(_) => Response::MakeCredential(
-                MakeCredentialResponse::decode(reader)?,
-            ),
-            Request::GetAssertion(_) => Response::GetAssertion(
-                GetAssertionResponse::decode(reader)?,
-            ),
+            Request::MakeCredential(_) => {
+                Response::MakeCredential(MakeCredentialResponse::decode(reader)?)
+            }
+            Request::GetAssertion(_) => {
+                Response::GetAssertion(GetAssertionResponse::decode(reader)?)
+            }
             Request::GetInfo => Response::GetInfo(GetInfoResponse::decode(reader)?),
             Request::ClientPin(_) => Response::ClientPin(ClientPinResponse::decode(reader)?),
         })
@@ -77,9 +75,10 @@ pub struct MakeCredentialRequest<'a> {
 
 impl<'a> MakeCredentialRequest<'a> {
     pub fn encode<W: WriteBytesExt>(&self, mut encoder: &mut Encoder<W>) -> FidoResult<()> {
-        encoder.writer().write_u8(0x01).context(
-            FidoErrorKind::CborEncode,
-        )?; // authenticatorMakeCredential
+        encoder
+            .writer()
+            .write_u8(0x01)
+            .context(FidoErrorKind::CborEncode)?; // authenticatorMakeCredential
         let mut length = 4;
         length += !self.exclude_list.is_empty() as usize;
         length += !self.extensions.is_empty() as usize;
@@ -176,9 +175,10 @@ pub struct GetAssertionRequest<'a> {
 
 impl<'a> GetAssertionRequest<'a> {
     pub fn encode<W: WriteBytesExt>(&self, mut encoder: &mut Encoder<W>) -> FidoResult<()> {
-        encoder.writer().write_u8(0x02).context(
-            FidoErrorKind::CborEncode,
-        )?; // authenticatorGetAssertion
+        encoder
+            .writer()
+            .write_u8(0x02)
+            .context(FidoErrorKind::CborEncode)?; // authenticatorGetAssertion
         let mut length = 2;
         length += !self.allow_list.is_empty() as usize;
         length += !self.extensions.is_empty() as usize;
@@ -315,9 +315,10 @@ pub struct ClientPinRequest<'a> {
 
 impl<'a> ClientPinRequest<'a> {
     pub fn encode<W: WriteBytesExt>(&self, encoder: &mut Encoder<W>) -> FidoResult<()> {
-        encoder.writer().write_u8(0x06).context(
-            FidoErrorKind::CborEncode,
-        )?; // authenticatorClientPIN
+        encoder
+            .writer()
+            .write_u8(0x06)
+            .context(FidoErrorKind::CborEncode)?; // authenticatorClientPIN
         let mut length = 2;
         length += self.key_agreement.is_some() as usize;
         length += self.pin_auth.is_some() as usize;
@@ -383,7 +384,6 @@ impl ClientPinResponse {
     }
 }
 
-
 #[derive(Debug)]
 pub struct OptionsInfo {
     pub plat: bool,
@@ -439,21 +439,28 @@ impl AuthenticatorData {
         let flags = bytes[32];
         data.up = (flags & 0x01) == 0x01;
         data.uv = (flags & 0x02) == 0x02;
+        let is_attested = (flags & 0x40) == 0x40;
+        let has_extension_data = (flags & 0x80) == 0x80;
         data.sign_count = BigEndian::read_u32(&bytes[33..37]);
         if bytes.len() < 38 {
             return Ok(data);
         }
+
         let mut cur = Cursor::new(&bytes[37..]);
-        let attested_credential_data = AttestedCredentialData::from_bytes(&mut cur)?;
-        data.attested_credential_data = attested_credential_data;
-        if cur.position() >= (bytes.len() - 37) as u64 {
-            return Ok(data);
+        if is_attested {
+            let attested_credential_data = AttestedCredentialData::from_bytes(&mut cur)?;
+            data.attested_credential_data = attested_credential_data;
+            if cur.position() >= (bytes.len() - 37) as u64 {
+                return Ok(data);
+            }
         }
-        let mut decoder = GenericDecoder::new(Config::default(), cur);
-        for _ in 0..decoder.borrow_mut().object()? {
-            let key = decoder.borrow_mut().text()?;
-            let value = decoder.value()?;
-            data.extensions.insert(key.to_string(), value);
+        if has_extension_data {
+            let mut decoder = GenericDecoder::new(Config::default(), cur);
+            for _ in 0..decoder.borrow_mut().object()? {
+                let key = decoder.borrow_mut().text()?;
+                let value = decoder.value()?;
+                data.extensions.insert(key.to_string(), value);
+            }
         }
         Ok(data)
     }
@@ -494,15 +501,15 @@ impl P256Key {
         if cose.key_type != 2 || cose.algorithm != -7 {
             Err(FidoErrorKind::KeyType)?
         }
-        if let (Some(Value::U8(curve)),
-                Some(Value::Bytes(value::Bytes::Bytes(x))),
-                Some(Value::Bytes(value::Bytes::Bytes(y)))) =
-            (
-                cose.parameters.get(&-1),
-                cose.parameters.get(&-2),
-                cose.parameters.get(&-3),
-            )
-        {
+        if let (
+            Some(Value::U8(curve)),
+            Some(Value::Bytes(value::Bytes::Bytes(x))),
+            Some(Value::Bytes(value::Bytes::Bytes(y))),
+        ) = (
+            cose.parameters.get(&-1),
+            cose.parameters.get(&-2),
+            cose.parameters.get(&-3),
+        ) {
             if *curve != 1 {
                 Err(FidoErrorKind::KeyType)?
             }
@@ -532,9 +539,10 @@ impl P256Key {
                 (-1, Value::U8(1)),
                 (-2, Value::Bytes(value::Bytes::Bytes(self.x.to_vec()))),
                 (-3, Value::Bytes(value::Bytes::Bytes(self.y.to_vec()))),
-            ].iter()
-                .cloned()
-                .collect(),
+            ]
+            .iter()
+            .cloned()
+            .collect(),
         }
     }
 

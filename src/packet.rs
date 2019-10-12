@@ -4,9 +4,9 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use num_traits::{FromPrimitive, ToPrimitive};
-use failure::ResultExt;
 use super::error::*;
+use failure::ResultExt;
+use num_traits::{FromPrimitive, ToPrimitive};
 
 use std::io::{Read, Write};
 
@@ -81,9 +81,9 @@ pub fn write_init_packet<W: Write>(
         Err(FidoErrorKind::WritePacket)?
     }
     packet.resize(report_size + 1, 0);
-    writer.write_all(&packet).context(
-        FidoErrorKind::WritePacket,
-    )?;
+    writer
+        .write_all(&packet)
+        .context(FidoErrorKind::WritePacket)?;
     Ok(())
 }
 
@@ -98,9 +98,9 @@ impl InitPacket {
     pub fn from_reader<R: Read>(mut reader: R, report_size: usize) -> FidoResult<InitPacket> {
         let mut buf = Vec::with_capacity(report_size);
         buf.resize(report_size, 0);
-        reader.read_exact(&mut buf[0..report_size]).context(
-            FidoErrorKind::ReadPacket,
-        )?;
+        reader
+            .read_exact(&mut buf[0..report_size])
+            .context(FidoErrorKind::ReadPacket)?;
         let mut cid = [0; 4];
         cid.copy_from_slice(&buf[0..4]);
         let cmd = match CtapCommand::from_u8(buf[4] ^ FRAME_INIT) {
@@ -142,9 +142,9 @@ pub fn write_cont_packet<W: Write>(
         Err(FidoErrorKind::WritePacket)?
     }
     packet.resize(report_size + 1, 0);
-    writer.write_all(&packet).context(
-        FidoErrorKind::WritePacket,
-    )?;
+    writer
+        .write_all(&packet)
+        .context(FidoErrorKind::WritePacket)?;
     Ok(())
 }
 
@@ -162,9 +162,9 @@ impl ContPacket {
     ) -> FidoResult<ContPacket> {
         let mut buf = Vec::with_capacity(report_size);
         buf.resize(report_size, 0);
-        reader.read_exact(&mut buf[0..report_size]).context(
-            FidoErrorKind::ReadPacket,
-        )?;
+        reader
+            .read_exact(&mut buf[0..report_size])
+            .context(FidoErrorKind::ReadPacket)?;
         let mut cid = [0; 4];
         cid.copy_from_slice(&buf[0..4]);
         let seq = buf[4];

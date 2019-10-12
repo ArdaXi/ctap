@@ -4,15 +4,16 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use ring::{agreement, rand, digest, hmac, signature};
-use ring::error::Unspecified;
-use untrusted::Input;
-use rust_crypto::blockmodes::NoPadding;
-use rust_crypto::aes;
-use rust_crypto::buffer::{RefReadBuffer, RefWriteBuffer};
-use failure::ResultExt;
 use super::cbor::{CoseKey, P256Key};
 use super::error::*;
+use failure::ResultExt;
+use ring::error::Unspecified;
+use ring::{agreement, digest, hmac, rand, signature};
+use rust_crypto::aes;
+use rust_crypto::blockmodes::NoPadding;
+use rust_crypto::buffer::{RefReadBuffer, RefWriteBuffer};
+use rust_crypto::symmetriccipher::{Decryptor, Encryptor};
+use untrusted::Input;
 
 #[derive(Debug)]
 pub struct SharedSecret {
@@ -26,9 +27,9 @@ impl SharedSecret {
         let private = agreement::EphemeralPrivateKey::generate(&agreement::ECDH_P256, &rng)
             .context(FidoErrorKind::GenerateKey)?;
         let public = &mut [0u8; agreement::PUBLIC_KEY_MAX_LEN][..private.public_key_len()];
-        private.compute_public_key(public).context(
-            FidoErrorKind::GenerateKey,
-        )?;
+        private
+            .compute_public_key(public)
+            .context(FidoErrorKind::GenerateKey)?;
         let peer = P256Key::from_cose(peer_key)
             .context(FidoErrorKind::ParsePublic)?
             .bytes();
@@ -39,7 +40,8 @@ impl SharedSecret {
             peer,
             Unspecified,
             |material| Ok(digest::digest(&digest::SHA256, material)),
-        ).context(FidoErrorKind::GenerateSecret)?;
+        )
+        .context(FidoErrorKind::GenerateSecret)?;
         let mut res = SharedSecret {
             public_key: P256Key::from_bytes(&public)
                 .context(FidoErrorKind::ParsePublic)?
@@ -50,42 +52,46 @@ impl SharedSecret {
         Ok(res)
     }
 
-    pub fn encrypt_pin(&self, pin: &str) -> FidoResult<[u8; 16]> {
-        let mut encryptor = aes::cbc_encryptor(
+    pub fn encryptor(&self) -> Box<dyn Encryptor + 'static> {
+        aes::cbc_encryptor(
             aes::KeySize::KeySize256,
             &self.shared_secret,
             &[0u8; 16],
             NoPadding,
-        );
+        )
+    }
+
+    pub fn encrypt_pin(&self, pin: &str) -> FidoResult<[u8; 16]> {
+        let mut encryptor = self.encryptor();
         let pin_bytes = pin.as_bytes();
         let hash = digest::digest(&digest::SHA256, &pin_bytes);
         let in_bytes = &hash.as_ref()[0..16];
         let mut input = RefReadBuffer::new(&in_bytes);
         let mut out_bytes = [0; 16];
         let mut output = RefWriteBuffer::new(&mut out_bytes);
-        encryptor.encrypt(&mut input, &mut output, true).map_err(
-            |_| {
-                FidoErrorKind::EncryptPin
-            },
-        )?;
+        encryptor
+            .encrypt(&mut input, &mut output, true)
+            .map_err(|_| FidoErrorKind::EncryptPin)?;
         Ok(out_bytes)
     }
 
-    pub fn decrypt_token(&self, data: &mut [u8]) -> FidoResult<PinToken> {
-        let mut decryptor = aes::cbc_decryptor(
+    pub fn decryptor(&self) -> Box<dyn Decryptor + 'static> {
+        aes::cbc_decryptor(
             aes::KeySize::KeySize256,
             &self.shared_secret,
             &[0u8; 16],
             NoPadding,
-        );
+        )
+    }
+
+    pub fn decrypt_token(&self, data: &mut [u8]) -> FidoResult<PinToken> {
+        let mut decryptor = self.decryptor();
         let mut input = RefReadBuffer::new(data);
         let mut out_bytes = [0; 16];
         let mut output = RefWriteBuffer::new(&mut out_bytes);
-        decryptor.decrypt(&mut input, &mut output, true).map_err(
-            |_| {
-                FidoErrorKind::DecryptPin
-            },
-        )?;
+        decryptor
+            .decrypt(&mut input, &mut output, true)
+            .map_err(|_| FidoErrorKind::DecryptPin)?;
         Ok(PinToken(hmac::SigningKey::new(&digest::SHA256, &out_bytes)))
     }
 }
@@ -119,5 +125,6 @@ pub fn verify_signature(
         public_key,
         msg,
         signature,
-    ).is_ok()
+    )
+    .is_ok()
 }

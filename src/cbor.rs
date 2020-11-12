@@ -415,7 +415,7 @@ impl OptionsInfo {
                 "clientPin" => options.client_pin = Some(decoder.bool()?),
                 "up" => options.up = decoder.bool()?,
                 "uv" => options.uv = Some(decoder.bool()?),
-                _ => continue,
+                _ => { decoder.bool()?; },
             }
         }
         Ok(options)

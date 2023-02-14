@@ -58,10 +58,12 @@ fn path_to_device(path: &PathBuf) -> io::Result<DeviceInfo> {
         }
 
         if key & REPORT_DESCRIPTOR_KEY_MASK == USAGE {
-            if size != 2 {
-                usage = u16::from(rd[pos + 1])
-            } else {
-                usage = LittleEndian::read_u16(&rd[(pos + 1)..(pos + 1 + (size as usize))]);
+            if usage == 0 {
+                if size != 2 {
+                    usage = u16::from(rd[pos + 1])
+                } else {
+                    usage = LittleEndian::read_u16(&rd[(pos + 1)..(pos + 1 + (size as usize))]);
+                }
             }
         }
 

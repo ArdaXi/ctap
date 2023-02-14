@@ -77,7 +77,7 @@ pub fn get_devices() -> FidoResult<impl Iterator<Item = hid::DeviceInfo>> {
     hid::enumerate()
         .context(FidoErrorKind::Io)
         .map(|devices| {
-            devices.filter(|dev| dev.usage_page == 0xf1d0 && dev.usage == 0x21)
+            devices.filter(|dev| dev.usage_page == 0xf1d0 && dev.usage == 0x01)
         })
         .map_err(From::from)
 }
